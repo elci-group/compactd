@@ -1,0 +1,94 @@
+# Deliverable spec for compactd.
+# Run: deliver --spec deliver.toml --strict
+
+[[file]]
+path = "Cargo.toml"
+required = true
+forbid_regex = ["TODO", "FIXME", "unimplemented!", "panic!"]
+
+[[file]]
+path = "Cargo.lock"
+required = true
+
+[[file]]
+path = "src/lib.rs"
+required = true
+forbid_regex = ["TODO", "FIXME", "unimplemented!", "panic!"]
+
+[[file]]
+path = "src/main.rs"
+required = true
+forbid_regex = ["TODO", "FIXME", "unimplemented!", "panic!"]
+
+[[file]]
+path = "src/api.rs"
+required = true
+forbid_regex = ["TODO", "FIXME", "unimplemented!", "panic!"]
+
+[[file]]
+path = "src/config.rs"
+required = true
+forbid_regex = ["TODO", "FIXME", "unimplemented!", "panic!"]
+
+[[file]]
+path = "src/store.rs"
+required = true
+forbid_regex = ["TODO", "FIXME", "unimplemented!", "panic!"]
+
+[[file]]
+path = "src/compactor.rs"
+required = true
+forbid_regex = ["TODO", "FIXME", "unimplemented!", "panic!"]
+
+[[file]]
+path = "src/scanner.rs"
+required = true
+forbid_regex = ["TODO", "FIXME", "unimplemented!", "panic!"]
+
+[[file]]
+path = "tests/integration.rs"
+required = true
+forbid_regex = ["TODO", "FIXME", "unimplemented!", "panic!"]
+
+[[file]]
+path = "benches/bench.rs"
+required = true
+forbid_regex = ["TODO", "FIXME", "unimplemented!", "panic!"]
+
+[[file]]
+path = "README.md"
+required = true
+forbid_regex = ["TODO", "FIXME"]
+
+[[file]]
+path = "kaptaind.toml"
+required = true
+
+[[file]]
+path = ".gitignore"
+required = true
+
+[[command]]
+name = "cargo test"
+cmd = ["cargo", "test"]
+expect_exit = 0
+timeout_secs = 300
+stdout_contains = ["test result: ok"]
+
+[[command]]
+name = "cargo build release"
+cmd = ["cargo", "build", "--release"]
+expect_exit = 0
+timeout_secs = 300
+
+[[command]]
+name = "cargo fmt check"
+cmd = ["cargo", "fmt", "--", "--check"]
+expect_exit = 0
+timeout_secs = 60
+
+[[command]]
+name = "cargo clippy"
+cmd = ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"]
+expect_exit = 0
+timeout_secs = 300

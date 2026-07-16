@@ -1,0 +1,10 @@
+# kaptaind configuration for compactd.
+# This file is read by kaptaind; the daemon is NOT started here.
+
+[test]
+command = "cargo test"
+required = true
+
+[push]
+enabled = true
+branch = "main"

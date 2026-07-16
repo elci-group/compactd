@@ -1,0 +1,9 @@
+/target/
+*.db
+*.db-journal
+.kaptaind/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

@@ -1,0 +1,10 @@
+module                                      lines    funcs  entropy     health
+tests/integration.rs                          148        8     0.52    Healthy
+benches/bench.rs                               32        2     0.44    Healthy
+src/config.rs                                 194       10     0.60    Healthy
+src/lib.rs                                     18        0     0.45    Healthy
+src/main.rs                                   146        3     0.57    Healthy
+src/api.rs                                    292       10     0.64    Healthy
+src/compactor.rs                              532       24     0.69    Warning
+src/scanner.rs                                165        4     0.58    Healthy
+src/store.rs                                  440       14     0.61    Healthy
