@@ -130,3 +130,5 @@ deliver --spec deliver.toml --strict
 ## License
 
 MIT
+
+Monitored by [kaptaind](https://github.com/elci-group/kaptaind).
