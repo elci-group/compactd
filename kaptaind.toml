@@ -21,7 +21,7 @@ minor = 0.6    # score at or above this bumps Minor
 patch = 0.1    # score at or above this bumps Patch; below it, no commit
 
 [push]
-enabled = false
+enabled = true
 branch = "main"
 
 [ratelimit]
@@ -39,7 +39,7 @@ required = true
 # exclude = ["*.log", ".env*"]
 
 # [deckhand]
-# enabled = false              # enable automatic storage management
+# enabled = true              # enable automatic storage management
 # interval_minutes = 360       # how often to run (default: 6 hours)
 # sweep_keep_days = 30         # keep registry/git cache entries newer than N days
 # clean_profiles = ["debug"]   # cargo profiles to clean
@@ -48,7 +48,7 @@ required = true
 # min_free_percent = 10        # skip pass when more than this % of disk is free
 
 # [shark]
-# enabled = false              # enable Shark Stating high availability
+# enabled = true              # enable Shark Stating high availability
 # arbiter_path = ".kaptaind/shark"  # shared directory for leadership leases
 # heartbeat_interval_ms = 1000 # how often to renew/inspect lease
 # heartbeat_timeout_ms = 5000  # how long to wait before considering leader dead
