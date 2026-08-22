@@ -1,0 +1,19 @@
+[[file]]
+path = ".claude/CLAUDE.md"
+tool = "claude"
+sha256 = "f36750ecde19327be1785f108f258c0ed186d5d8fe1c71ad9fdcce447e17e3da"
+
+[[file]]
+path = ".github/copilot-instructions.md"
+tool = "github"
+sha256 = "013fb580bc7dfd6434e56efdd035ba0a20bfd8bcbb7824c3529a1395dc63bc7d"
+
+[[file]]
+path = ".github/workflows/secret-scan.yml"
+tool = "github"
+sha256 = "682d27eadc5fc0a206fe75292bbdef5f7085e56b3e3e79de1c4a4e0e98e38bd6"
+
+[[file]]
+path = "AGENTS.md"
+tool = "codex"
+sha256 = "df1fa28f6e4f0ce596fc95f13c1f730dd8b646e395b59eadeb6d63ed40b01d60"

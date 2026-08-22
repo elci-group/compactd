@@ -1,0 +1,12 @@
+[project]
+name = "compactd"
+
+[tools]
+claude = true
+codex = true
+github = true
+
+[rules]
+documentation = true
+security = true
+testing = true
