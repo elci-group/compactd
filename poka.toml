@@ -6,6 +6,9 @@ claude = true
 codex = true
 github = true
 
+lwoodz = true
+traci = true
+
 [rules]
 documentation = true
 security = true
