@@ -108,6 +108,34 @@ curl -X POST http://127.0.0.1:3103/watch \
 curl http://127.0.0.1:3103/metrics
 ```
 
+## Library use
+
+The compaction algorithms build without the daemon. Depend with
+`default-features = false` to get `compactor` (and the re-exported types) without
+`axum`, `rusqlite`, `notify` or `clap`. That lets a host with its own SQLite
+version embed compactd:
+
+```toml
+compactd = { git = "https://github.com/elci-group/compactd", rev = "<commit>", default-features = false }
+```
+
+`compact_to_budget` compacts to a size budget rather than a turn count. It
+de-duplicates tool outputs, collapses continuation turns, cuts oversized turns,
+then keeps the longest run of most-recent turns that fits. Evicted turns come
+back as a deterministic, size-bounded digest (no model call) that keeps the
+opening turn and the most recent evicted ones:
+
+```rust
+use compactd::{compact_to_budget, BudgetPolicy};
+
+let out = compact_to_budget(&mut session, BudgetPolicy {
+    budget: 8_000,          // bytes of live turns
+    max_turn_bytes: 4_000,  // cap for any single turn
+    digest_bytes: 1_200,    // cap for the evicted-turn digest
+})?;
+if let Some(digest) = out.digest { /* prepend to the prompt */ }
+```
+
 ## Development
 
 ```bash

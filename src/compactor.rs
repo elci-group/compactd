@@ -391,6 +391,200 @@ pub fn compact_session(
     })
 }
 
+/// Limits for [`compact_to_budget`], all measured in [`Turn::token_weight`]
+/// units (bytes of content plus tool arguments and outputs).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BudgetPolicy {
+    /// Total weight the live turns may occupy after compaction.
+    pub budget: usize,
+    /// Any single turn's content is cut to this many bytes before fitting.
+    pub max_turn_bytes: usize,
+    /// Upper bound on the digest that stands in for evicted turns.
+    pub digest_bytes: usize,
+}
+
+/// Result of [`compact_to_budget`]: the usual metrics, plus a deterministic
+/// digest of the turns that no longer fit.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BudgetCompaction {
+    /// Metrics; `turns_archived` counts turns evicted to meet the budget.
+    pub result: CompactionResult,
+    /// Plain-text outline of the evicted turns, oldest first, or `None` when
+    /// nothing was evicted.
+    pub digest: Option<String>,
+    /// Number of live turns whose content was cut to `max_turn_bytes`.
+    pub turns_truncated: usize,
+}
+
+const TRUNCATION_MARK: &str = " … [truncated]";
+
+/// Cut `text` to at most `max` bytes on a char boundary.
+fn cut_to(text: &str, max: usize) -> &str {
+    if text.len() <= max {
+        return text;
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+/// First non-empty line of `text`, whitespace-collapsed and cut to `max` bytes.
+fn gist(text: &str, max: usize) -> String {
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.len() <= max {
+        line
+    } else {
+        format!("{}…", cut_to(&line, max.saturating_sub("…".len())))
+    }
+}
+
+fn digest_line(turn: &Turn) -> String {
+    let verb = match turn.role.as_str() {
+        "user" => "user asked",
+        "assistant" => "assistant answered",
+        other => other,
+    };
+    let mut line = format!("- {verb}: {}", gist(&turn.content, 160));
+    if !turn.tool_calls.is_empty() {
+        let mut names: Vec<&str> = turn.tool_calls.iter().map(|c| c.name.as_str()).collect();
+        names.dedup();
+        line.push_str(&format!(" (tools: {})", names.join(", ")));
+    }
+    line
+}
+
+/// Build a digest of `evicted` within `max` bytes. The opening turn is kept
+/// for the conversation's topic; the rest of the room favours the most recent
+/// evicted turns, since they are the ones the live context continues from.
+fn build_digest(evicted: &[Turn], max: usize) -> Option<String> {
+    if evicted.is_empty() {
+        return None;
+    }
+    let header = format!(
+        "Earlier in this conversation ({} turn{} compacted):",
+        evicted.len(),
+        if evicted.len() == 1 { "" } else { "s" }
+    );
+    let mut used = header.len();
+    if used > max {
+        return None;
+    }
+    let lines: Vec<String> = evicted.iter().map(digest_line).collect();
+    let mut first: Option<&String> = None;
+    if used + 1 + lines[0].len() <= max {
+        used += 1 + lines[0].len();
+        first = Some(&lines[0]);
+    }
+    // Room for the "… N more turn(s) omitted" marker, so it is never the
+    // line squeezed out when the tail fills the bound.
+    const GAP_RESERVE: usize = 40;
+    let mut tail = Vec::new();
+    for line in lines.iter().skip(1).rev() {
+        if used + 1 + line.len() + GAP_RESERVE > max {
+            break;
+        }
+        used += 1 + line.len();
+        tail.push(line);
+    }
+    tail.reverse();
+    let shown = usize::from(first.is_some()) + tail.len();
+    let mut out = header;
+    if let Some(line) = first {
+        out.push('\n');
+        out.push_str(line);
+    }
+    let omitted = evicted.len() - shown;
+    if omitted > 0 && used + GAP_RESERVE <= max {
+        out.push_str(&format!("\n- … {omitted} more turn(s) omitted"));
+    }
+    for line in tail {
+        out.push('\n');
+        out.push_str(line);
+    }
+    Some(out)
+}
+
+/// Compact a session to fit a weight budget instead of a turn count.
+///
+/// Runs [`DeduplicateToolOutputs`] and [`CollapseContinuations`], cuts any
+/// oversized turn to `policy.max_turn_bytes`, then keeps the longest run of
+/// most-recent turns that fits `policy.budget`. Older turns are evicted and
+/// summarised in a deterministic digest (no model call), so a caller can keep
+/// the conversation's earlier thread in view at a fraction of its size.
+///
+/// The live turns always form a contiguous suffix of the session: a turn is
+/// never dropped from between two kept ones.
+///
+/// # Errors
+///
+/// Propagates errors from the underlying strategies.
+pub fn compact_to_budget(
+    session: &mut Session,
+    policy: BudgetPolicy,
+) -> Result<BudgetCompaction, CompactionError> {
+    let mut total = CompactionMetrics::default();
+
+    let m = DeduplicateToolOutputs.compact(session)?;
+    total.duplicates_removed += m.duplicates_removed;
+    total.token_bytes_saved += m.token_bytes_saved;
+
+    let m = CollapseContinuations.compact(session)?;
+    total.continuation_turns_collapsed += m.continuation_turns_collapsed;
+    total.token_bytes_saved += m.token_bytes_saved;
+
+    let mut truncated = 0;
+    for turn in &mut session.turns {
+        if turn.content.len() > policy.max_turn_bytes {
+            let keep = policy.max_turn_bytes.saturating_sub(TRUNCATION_MARK.len());
+            let cut = cut_to(&turn.content, keep).to_string();
+            total.token_bytes_saved += turn.content.len() - cut.len();
+            turn.content = cut + TRUNCATION_MARK;
+            truncated += 1;
+        }
+    }
+
+    let mut used = 0;
+    let mut keep_from = session.len();
+    for (idx, turn) in session.turns.iter().enumerate().rev() {
+        let weight = turn.token_weight();
+        if used + weight > policy.budget {
+            break;
+        }
+        used += weight;
+        keep_from = idx;
+    }
+    let evicted: Vec<Turn> = session.turns.drain(..keep_from).collect();
+    total.turns_archived = evicted.len();
+    total.token_bytes_saved += evicted.iter().map(Turn::token_weight).sum::<usize>();
+    let digest = build_digest(&evicted, policy.digest_bytes);
+
+    total.turns_remaining = session.len();
+    session.last_compacted_at = Some(Utc::now());
+    debug!(
+        session_id = %session.id,
+        evicted = evicted.len(),
+        truncated,
+        "compacted session to budget"
+    );
+
+    Ok(BudgetCompaction {
+        result: CompactionResult {
+            session_id: session.id.clone(),
+            metrics: total,
+            compacted_at: Utc::now(),
+        },
+        digest,
+        turns_truncated: truncated,
+    })
+}
+
 /// Parse a session from a JSON object or JSONL text.
 ///
 /// If `text` begins with `[` it is parsed as a JSON array of turns; otherwise
@@ -512,6 +706,97 @@ mod tests {
                 || result.metrics.continuation_turns_collapsed > 0
         );
         assert!(session.last_compacted_at.is_some());
+    }
+
+    fn policy(budget: usize) -> BudgetPolicy {
+        BudgetPolicy {
+            budget,
+            max_turn_bytes: 1_000,
+            digest_bytes: 400,
+        }
+    }
+
+    #[test]
+    fn budget_keeps_everything_that_fits() {
+        let mut session = Session::new("s1");
+        session.add_turn(turn_with_content("user", "hello"));
+        session.add_turn(turn_with_content("assistant", "hi there"));
+
+        let out = compact_to_budget(&mut session, policy(100)).unwrap();
+        assert_eq!(session.len(), 2);
+        assert_eq!(out.result.metrics.turns_archived, 0);
+        assert!(out.digest.is_none());
+    }
+
+    #[test]
+    fn budget_evicts_oldest_contiguously_and_digests_them() {
+        let mut session = Session::new("s1");
+        session.add_turn(turn_with_content("user", "What does hellhound do?\nmore"));
+        session.add_turn(turn_with_content("assistant", &"a".repeat(50)));
+        session.add_turn(turn_with_content("user", "And winch?"));
+        session.add_turn(turn_with_content("assistant", "Winch resolves deps."));
+
+        let out = compact_to_budget(&mut session, policy(40)).unwrap();
+        assert_eq!(session.len(), 2);
+        assert_eq!(session.turns[0].content, "And winch?");
+        assert_eq!(out.result.metrics.turns_archived, 2);
+        let digest = out.digest.unwrap();
+        assert!(digest.starts_with("Earlier in this conversation (2 turns compacted):"));
+        assert!(digest.contains("- user asked: What does hellhound do?"));
+        assert!(!digest.contains("more"));
+        assert!(digest.contains("- assistant answered: aaa"));
+    }
+
+    #[test]
+    fn budget_never_skips_a_turn_to_fit_an_older_one() {
+        let mut session = Session::new("s1");
+        session.add_turn(turn_with_content("user", "tiny"));
+        session.add_turn(turn_with_content("assistant", &"b".repeat(80)));
+        session.add_turn(turn_with_content("user", "latest"));
+
+        compact_to_budget(&mut session, policy(20)).unwrap();
+        assert_eq!(session.len(), 1);
+        assert_eq!(session.turns[0].content, "latest");
+    }
+
+    #[test]
+    fn budget_truncates_oversized_turns_on_char_boundaries() {
+        let mut session = Session::new("s1");
+        session.add_turn(turn_with_content("user", &"é".repeat(2_000)));
+
+        let out = compact_to_budget(&mut session, policy(5_000)).unwrap();
+        assert_eq!(out.turns_truncated, 1);
+        assert!(session.turns[0].content.len() <= 1_000);
+        assert!(session.turns[0].content.ends_with("[truncated]"));
+    }
+
+    #[test]
+    fn digest_stays_within_its_bound_and_keeps_topic_and_latest() {
+        let mut session = Session::new("s1");
+        session.add_turn(turn_with_content("user", "Opening topic"));
+        for i in 0..40 {
+            session.add_turn(turn_with_content("assistant", &format!("reply number {i}")));
+        }
+        session.add_turn(turn_with_content("user", &"z".repeat(30)));
+
+        let out = compact_to_budget(&mut session, policy(30)).unwrap();
+        let digest = out.digest.unwrap();
+        assert!(digest.len() <= 400, "digest was {} bytes", digest.len());
+        assert!(digest.contains("Opening topic"));
+        assert!(digest.contains("reply number 39"));
+        assert!(digest.contains("more turn(s) omitted"));
+    }
+
+    #[test]
+    fn budget_collapses_continuations_before_fitting() {
+        let mut session = Session::new("s1");
+        session.add_turn(turn_with_content("user", "continue"));
+        session.add_turn(turn_with_content("user", "continue"));
+        session.add_turn(turn_with_content("assistant", "ok"));
+
+        let out = compact_to_budget(&mut session, policy(100)).unwrap();
+        assert_eq!(out.result.metrics.continuation_turns_collapsed, 1);
+        assert_eq!(session.len(), 2);
     }
 
     #[test]

@@ -1,7 +1,6 @@
 //! CLI entry point for compactd.
 mod curly_expand;
 
-
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use compactd::{
